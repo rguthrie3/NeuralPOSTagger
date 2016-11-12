@@ -130,7 +130,7 @@ network:add(nn.Linear(args.hidden_size, tag_set_size))
 network:add(nn.LogSoftMax())
 local trainable_params, grad_params = network:getParameters()
 
-local criterion = nn.CrossEntropyCriterion()
+local criterion = nn.ClassNLLCriterion()
 
 if args.cuda then
     print("===> Using CUDA")
@@ -144,9 +144,11 @@ end
 -- OPTIMIZATION CONFIGURATION AND LOGGING
 -- ===-------------------------------------------------------------------------------------------------------===
 local optim_logger = optim.Logger(logging_dir .. "/minibatch_cost.log")
-optim_logger:setNames{"Training.cost", "Grad.norm"}
+optim_logger:setNames{"Minibatch.cost"}
+optim_logger:style{"+-"}
 local train_dev_logger = optim.Logger(logging_dir .. "/train_dev_cost.log")
 train_dev_logger:setNames{"Training.cost", "Dev.cost"}
+train_dev_logger:style{"+-", "+-"}
 rmsprop_config = { learningRate=args.learning_rate }
 
 
@@ -205,14 +207,13 @@ while epoch <= args.num_epochs do
             -- Backward pass
             local dcost_doutputs = criterion:backward(outputs, targets)
             network:backward(feats, dcost_doutputs)
-            local norm    = torch.norm(grad_params)
 
             -- Clip grad params
             if args.step_clipping > 0 then
-                norm = network:gradParamClip(args.step_clipping)
+                network:gradParamClip(args.step_clipping)
             end
 
-            optim_logger:add{cost, norm}
+            optim_logger:add{cost}
 
             return cost, grad_params
         end
@@ -237,6 +238,7 @@ while epoch <= args.num_epochs do
     local confusion = optim.ConfusionMatrix(ix_to_tag)
     for i = 1, num_dev_minibatches do
         local feats, targets = sample_minibatch(shuffle, shuffle_ind, dev_data, context_size)
+        shuffle_ind = shuffle_ind + args.minibatch_size
 
         local output = network:forward(feats)
         local err    = criterion:forward(output, targets)
@@ -247,12 +249,14 @@ while epoch <= args.num_epochs do
         end
     end
 
+    print(confusion)
     confusion:render("score", true)
 
     -- Log costs
     train_cost = train_cost / num_minibatches
     dev_cost   = dev_cost / num_dev_minibatches 
     train_dev_logger:add{train_cost, dev_cost}
+    train_dev_logger:plot()
     print("\tTrain Cost: " .. train_cost)
     print("\tDev Cost: " .. dev_cost)
 
